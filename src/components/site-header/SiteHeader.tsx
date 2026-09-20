@@ -1,5 +1,4 @@
-import { Link, NavLink } from "react-router-dom";
-import { cn } from "@/lib/cn";
+import { Link } from "react-router-dom";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 /** Minimal floating pill header: wordmark + nav + theme switch, centered. */
