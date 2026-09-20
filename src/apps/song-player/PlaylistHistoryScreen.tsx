@@ -6,6 +6,7 @@ import {
   Clock,
   History,
   ListMusic,
+  Loader2,
   Music,
   Play,
   Plus,
@@ -28,6 +29,7 @@ import type { HistoryItem, Track } from "./types";
 interface PlaylistHistoryScreenProps {
   currentTrack: Track;
   isPlaying: boolean;
+  isLoading?: boolean;
   duration?: number;
   playlist: Track[];
   history: HistoryItem[];
@@ -47,6 +49,7 @@ const smoothEase: [number, number, number, number] = [0.22, 1, 0.36, 1];
 export function PlaylistHistoryScreen({
   currentTrack,
   isPlaying,
+  isLoading = false,
   duration,
   playlist,
   history,
@@ -278,10 +281,16 @@ export function PlaylistHistoryScreen({
                         style={{ background: getTrackGradient(track.id) }}
                       >
                         <Music className="size-4 text-white/90 drop-shadow-xs" />
-                        {isCurrent && isPlaying && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                            <Volume2 className="size-4 animate-pulse" />
-                          </div>
+                        {isCurrent && (
+                          isLoading ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                              <Loader2 className="size-4 animate-spin" />
+                            </div>
+                          ) : isPlaying ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                              <Volume2 className="size-4 animate-pulse" />
+                            </div>
+                          ) : null
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
@@ -305,9 +314,11 @@ export function PlaylistHistoryScreen({
                     >
                       <span className="font-mono text-[11px] text-ink-tertiary mr-0.5">
                         {formatTime(
-                          isCurrent && typeof duration === "number" && duration > 0
+                          track.duration && track.duration > 0
+                            ? track.duration
+                            : isCurrent && typeof duration === "number" && duration > 0
                             ? duration
-                            : track.duration || 0,
+                            : 0,
                           "--:--"
                         )}
                       </span>
@@ -424,10 +435,16 @@ export function PlaylistHistoryScreen({
                         style={{ background: getTrackGradient(item.id) }}
                       >
                         <Music className="size-4 text-white/90 drop-shadow-xs" />
-                        {isCurrent && isPlaying && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                            <Volume2 className="size-4 animate-pulse" />
-                          </div>
+                        {isCurrent && (
+                          isLoading ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                              <Loader2 className="size-4 animate-spin" />
+                            </div>
+                          ) : isPlaying ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                              <Volume2 className="size-4 animate-pulse" />
+                            </div>
+                          ) : null
                         )}
                       </div>
                       <div className="min-w-0 flex-1">

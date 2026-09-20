@@ -15,6 +15,7 @@ export interface SleepTimerState {
   isActive: boolean;
   remainingSeconds: number;
   totalSeconds: number;
+  mode?: "duration" | "end_of_track";
 }
 
 export type PlayerScreen = "player" | "playlist";

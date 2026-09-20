@@ -40,6 +40,7 @@ export class AudioEngine {
   private currentTrack: Track | null = null;
   private pendingSeek: number | null = null;
   private seekDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeLoadToken: object | null = null;
 
   public getCurrentTrack(): Track | null {
     return this.currentTrack;
@@ -81,6 +82,9 @@ export class AudioEngine {
       onError?: (error: unknown) => void;
     } = {}
   ): Howl {
+    const currentToken = {};
+    this.activeLoadToken = currentToken;
+
     if (this.seekDebounceTimer) {
       clearTimeout(this.seekDebounceTimer);
       this.seekDebounceTimer = null;
@@ -89,6 +93,7 @@ export class AudioEngine {
 
     if (this.howl) {
       this.cleanupExtraSounds();
+      this.howl.off(); // Detach all listeners from previous Howl instance
       this.howl.stop();
       this.howl.unload();
       this.howl = null;
@@ -102,33 +107,31 @@ export class AudioEngine {
       pool: 1, // Crucial: enforce single-voice pool to prevent Howler from allocating multiple overlapping streams
       preload: true,
       onload: () => {
-        const sound = (this.howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0];
-        const node = sound?._node;
-        const dur =
-          node && typeof node.duration === "number" && !isNaN(node.duration) && isFinite(node.duration) && node.duration > 0
-            ? node.duration
-            : this.howl?.duration() || track.duration || 0;
-
-        if (dur > 0) {
-          callbacks.onLoad?.(dur);
-        }
+        if (this.activeLoadToken !== currentToken) return;
+        const dur = this.getDuration() || track.duration || 0;
+        callbacks.onLoad?.(dur > 0 ? dur : 0);
       },
       onplay: () => {
+        if (this.activeLoadToken !== currentToken) return;
         this.cleanupExtraSounds();
         callbacks.onPlay?.();
       },
       onpause: () => {
+        if (this.activeLoadToken !== currentToken) return;
         callbacks.onPause?.();
       },
       onend: () => {
+        if (this.activeLoadToken !== currentToken) return;
         this.cleanupExtraSounds();
         callbacks.onEnd?.();
       },
       onloaderror: (_id, err) => {
+        if (this.activeLoadToken !== currentToken) return;
         console.warn(`[AudioEngine] Load error for track "${track.title}":`, err);
         callbacks.onError?.(err);
       },
       onplayerror: (_id, err) => {
+        if (this.activeLoadToken !== currentToken) return;
         console.warn(`[AudioEngine] Play error for track "${track.title}":`, err);
         this.howl?.once("unlock", () => {
           this.howl?.play();
@@ -136,26 +139,6 @@ export class AudioEngine {
         callbacks.onError?.(err);
       },
     });
-
-    // In HTML5 streaming mode, duration can resolve upon loadedmetadata or durationchange
-    setTimeout(() => {
-      const sound = (this.howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0];
-      const node = sound?._node;
-      if (node) {
-        const handleDurationUpdate = () => {
-          if (typeof node.duration === "number" && !isNaN(node.duration) && isFinite(node.duration) && node.duration > 0) {
-            callbacks.onLoad?.(node.duration);
-          }
-        };
-        if (node.readyState >= 1 && node.duration > 0) {
-          handleDurationUpdate();
-        } else {
-          node.addEventListener("loadedmetadata", handleDurationUpdate, { once: true });
-          node.addEventListener("durationchange", handleDurationUpdate);
-          node.addEventListener("canplay", handleDurationUpdate, { once: true });
-        }
-      }
-    }, 0);
 
     return this.howl;
   }

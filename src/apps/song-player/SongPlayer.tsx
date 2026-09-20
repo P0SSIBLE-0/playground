@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Clock,
   ListMusic,
+  Loader2,
   Moon,
   Pause,
   Play,
@@ -167,6 +168,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
 
   // Playback State
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(currentTrack?.duration ?? 0);
   const [isRepeating, setIsRepeating] = useState(false);
@@ -177,6 +179,21 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     remainingSeconds: 0,
     totalSeconds: 0,
   });
+
+  const sleepTimerRef = useRef(sleepTimer);
+  useEffect(() => {
+    sleepTimerRef.current = sleepTimer;
+  }, [sleepTimer]);
+
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  const durationRef = useRef(duration);
+  useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
 
   // Audio Engine instance (stable singleton)
   const [engine] = useState(() => new AudioEngine());
@@ -207,12 +224,33 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   const loadAndPlayTrack = useCallback(
     (track: Track, autoPlay = true) => {
       setCurrentTime(0);
+      setDuration(track.duration || 0);
+      setIsLoading(true);
+
+      // If sleep timer is set to stop at end of track, adapt remaining seconds to new track duration
+      if (sleepTimerRef.current.isActive && sleepTimerRef.current.mode === "end_of_track") {
+        const initDur = track.duration || 30;
+        setSleepTimer((prev) => ({
+          ...prev,
+          remainingSeconds: initDur,
+          totalSeconds: initDur,
+        }));
+      }
+
       engine.loadTrack(track, {
         onLoad: (dur) => {
+          setIsLoading(false);
           const realDur =
             dur > 0 && isFinite(dur) ? Math.round(dur) : track.duration || 0;
           if (realDur > 0) {
             setDuration(realDur);
+            if (sleepTimerRef.current.isActive && sleepTimerRef.current.mode === "end_of_track") {
+              setSleepTimer((prev) => ({
+                ...prev,
+                remainingSeconds: realDur,
+                totalSeconds: realDur,
+              }));
+            }
             setPlaylist((prev) => {
               const updated = prev.map((t) =>
                 t.id === track.id ? { ...t, duration: realDur } : t
@@ -230,9 +268,26 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
             });
           }
         },
-        onPlay: () => setIsPlaying(true),
+        onPlay: () => {
+          setIsLoading(false);
+          setIsPlaying(true);
+        },
         onPause: () => setIsPlaying(false),
+        onError: () => {
+          setIsLoading(false);
+        },
         onEnd: () => {
+          // If sleep timer is set to stop when current track ends, halt playback completely
+          if (
+            sleepTimerRef.current.isActive &&
+            sleepTimerRef.current.mode === "end_of_track"
+          ) {
+            engine.pause();
+            setIsPlaying(false);
+            setSleepTimer({ isActive: false, remainingSeconds: 0, totalSeconds: 0 });
+            return;
+          }
+
           // Read repeat through a ref: this callback is registered once per
           // load and would otherwise close over the stale toggle value.
           if (repeatRef.current) {
@@ -284,6 +339,29 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     const timer = window.setInterval(() => {
       setSleepTimer((prev) => {
         if (!prev.isActive) return prev;
+
+        if (prev.mode === "end_of_track") {
+          // If paused, keep countdown frozen until playback resumes
+          if (!isPlayingRef.current) {
+            return prev;
+          }
+
+          const liveDur = engine.getDuration() || durationRef.current || 0;
+          const liveSeek = engine.getSeek();
+          let remaining = prev.remainingSeconds - 1;
+          if (liveDur > 0 && typeof liveSeek === "number" && !isNaN(liveSeek) && liveSeek >= 0) {
+            remaining = Math.max(0, Math.round(liveDur - liveSeek));
+          }
+
+          if (remaining <= 1) {
+            engine.fadeOut(1200, () => {
+              setIsPlaying(false);
+            });
+            return { isActive: false, remainingSeconds: 0, totalSeconds: 0 };
+          }
+          return { ...prev, remainingSeconds: remaining };
+        }
+
         if (prev.remainingSeconds <= 1) {
           engine.fadeOut(1500, () => {
             setIsPlaying(false);
@@ -298,12 +376,20 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   }, [engine, sleepTimer.isActive]);
 
   // Sleep timer actions
-  const handleSetSleepTimer = (minutes: number) => {
-    const totalSecs = minutes * 60;
+  const handleSetSleepTimer = (
+    value: number,
+    mode: "duration" | "end_of_track" = "duration"
+  ) => {
+    const totalSecs =
+      mode === "end_of_track"
+        ? Math.max(1, value)
+        : Math.max(1, value * 60);
+
     setSleepTimer({
       isActive: true,
       remainingSeconds: totalSecs,
       totalSeconds: totalSecs,
+      mode,
     });
   };
 
@@ -313,7 +399,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
 
   // Play / Pause toggle
   const handleTogglePlay = () => {
-    if (!currentTrack) return;
+    if (!currentTrack || isLoading) return;
     if (isPlaying) {
       engine.pause();
       setIsPlaying(false);
@@ -357,6 +443,13 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       const target = Math.min(Math.max(0, targetSeconds), max);
       setCurrentTime(Math.floor(target));
       engine.seek(target);
+      if (sleepTimerRef.current.isActive && sleepTimerRef.current.mode === "end_of_track") {
+        const remaining = Math.max(0, Math.round(max - target));
+        setSleepTimer((prev) => ({
+          ...prev,
+          remainingSeconds: remaining,
+        }));
+      }
     },
     [engine, duration, currentTrack]
   );
@@ -395,7 +488,11 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       audioUrl,
       duration: 0,
     };
-    updatePlaylist([newTrack, ...playlist]);
+    setPlaylist((prev) => {
+      const next = [newTrack, ...prev];
+      setItem(STORAGE_PLAYLIST_KEY, next);
+      return next;
+    });
     setCurrentTrackIndex(0);
     loadAndPlayTrack(newTrack, true);
 
@@ -663,7 +760,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                 <div
                   style={{
                     animationPlayState:
-                      isPlaying && !shouldReduceMotion ? "running" : "paused",
+                      isPlaying && !isLoading && !shouldReduceMotion ? "running" : "paused",
                   }}
                   className="vinyl-record-spin relative flex size-11 items-center justify-center rounded-full border border-hairline-strong bg-surface-2"
                 >
@@ -682,6 +779,11 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   />
                   <div className="absolute z-10 size-1 rounded-full bg-ink" />
                 </div>
+                {isLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 backdrop-blur-xs text-white">
+                    <Loader2 className="size-4 animate-spin" />
+                  </div>
+                )}
               </motion.div>
 
               {/* Mini metadata */}
@@ -713,12 +815,14 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   e.stopPropagation();
                   handleTogglePlay();
                 }}
-                aria-label={isPlaying ? "Pause" : "Play"}
-                disabled={!hasTrack}
+                aria-label={isLoading ? "Loading track" : isPlaying ? "Pause" : "Play"}
+                disabled={!hasTrack || isLoading}
                 style={{ backgroundColor: trackColor }}
-                className="flex size-8 cursor-pointer items-center justify-center rounded-full text-white transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary-focus"
+                className="flex size-8 cursor-pointer items-center justify-center rounded-full text-white transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-75 focus-visible:outline-2 focus-visible:outline-primary-focus"
               >
-                {isPlaying ? (
+                {isLoading ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : isPlaying ? (
                   <Pause size={14} fill="currentColor" strokeWidth={0} />
                 ) : (
                   <Play
@@ -772,7 +876,13 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                           ? "text-white shadow-xs"
                           : "bg-surface-2 text-ink-subtle hover:bg-surface-3 hover:text-ink"
                       )}
-                      title="Set sleep timer"
+                      title={
+                        sleepTimer.isActive
+                          ? sleepTimer.mode === "end_of_track"
+                            ? `Sleep timer: Stop at end of track (${formatTime(sleepTimer.remainingSeconds)} left)`
+                            : `Sleep timer: ${formatTime(sleepTimer.remainingSeconds)} left`
+                          : "Set sleep timer"
+                      }
                       aria-label="Set sleep timer"
                     >
                       {sleepTimer.isActive ? (
@@ -824,10 +934,25 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                     <FluidOrb
                       size={208}
                       color={trackColor}
-                      animated={isPlaying && !shouldReduceMotion}
+                      animated={isPlaying && !isLoading && !shouldReduceMotion}
                       role="img"
                       aria-label={`${displayTrack.title} artwork`}
                     />
+                    <AnimatePresence>
+                      {isLoading && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.85 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.85 }}
+                          transition={{ duration: 0.2 }}
+                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                        >
+                          <div className="flex size-14 items-center justify-center rounded-full border border-white/20 bg-black/45 backdrop-blur-md shadow-lg text-white">
+                            <Loader2 className="size-6 animate-spin" />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </motion.div>
 
                   {/* Track Metadata: Sanitized & Restricted Length */}
@@ -956,12 +1081,14 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                           layoutId="player-play-pause-circle"
                           transition={{ type: "spring", stiffness: 300, damping: 25 }}
                           onClick={handleTogglePlay}
-                          aria-label={isPlaying ? "Pause" : "Play"}
-                          disabled={!hasTrack}
+                          aria-label={isLoading ? "Loading track" : isPlaying ? "Pause" : "Play"}
+                          disabled={!hasTrack || isLoading}
                           style={{ backgroundColor: trackColor }}
-                          className="flex size-10 cursor-pointer items-center justify-center rounded-full text-white shadow-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary-focus"
+                          className="flex size-10 cursor-pointer items-center justify-center rounded-full text-white shadow-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-75 focus-visible:outline-2 focus-visible:outline-primary-focus"
                         >
-                          {isPlaying ? (
+                          {isLoading ? (
+                            <Loader2 className="size-5 animate-spin" />
+                          ) : isPlaying ? (
                             <Pause className="size-5 fill-current" strokeWidth={0} />
                           ) : (
                             <Play
@@ -1026,6 +1153,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   <PlaylistHistoryScreen
                     currentTrack={displayTrack}
                     isPlaying={isPlaying}
+                    isLoading={isLoading}
                     duration={duration}
                     playlist={playlist}
                     history={history}
@@ -1051,6 +1179,13 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
         isOpen={isSleepModalOpen}
         onClose={() => setIsSleepModalOpen(false)}
         timerState={sleepTimer}
+        remainingTrackSeconds={Math.max(
+          0,
+          Math.round(
+            (engine.getDuration() || duration || 0) -
+              (engine.getSeek() || currentTime || 0)
+          )
+        )}
         onSetTimer={handleSetSleepTimer}
         onCancelTimer={handleCancelSleepTimer}
         accentColor={trackColor}
