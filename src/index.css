@@ -1,0 +1,169 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    "Inter", "SF Pro Display", -apple-system, system-ui, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-canvas: #ffffff;
+  --color-surface-1: #f7f8fa;
+  --color-surface-2: #eff1f4;
+  --color-surface-3: #e5e8ec;
+  --color-surface-4: #dadde3;
+
+  --color-hairline: #e3e6eb;
+  --color-hairline-strong: #caced5;
+  --color-hairline-tertiary: #9ba1ab;
+
+  --color-ink: #0d0e11;
+  --color-ink-muted: #363a43;
+  --color-ink-subtle: #656b76;
+  --color-ink-tertiary: #9298a4;
+
+  --color-primary: #5e6ad2;
+  --color-primary-hover: #4e5ac0;
+  --color-primary-focus: #5e69d1;
+  --color-on-primary: #ffffff;
+
+  --color-success: #16a34a;
+}
+
+/**
+ * Subtle white top-edge highlight for lifted dark panels —
+ * the Linear "pixel rendered" feel. Promoted to a @utility because the
+ * same arbitrary shadow repeated across shell + app surfaces.
+ */
+@utility edge-highlight {
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.04);
+}
+
+@layer base {
+  :root,
+  .light {
+    color-scheme: light;
+
+    --color-canvas: #ffffff;
+    --color-surface-1: #f7f8fa;
+    --color-surface-2: #eff1f4;
+    --color-surface-3: #e5e8ec;
+    --color-surface-4: #dadde3;
+
+    --color-hairline: #e3e6eb;
+    --color-hairline-strong: #caced5;
+    --color-hairline-tertiary: #9ba1ab;
+
+    --color-ink: #0d0e11;
+    --color-ink-muted: #363a43;
+    --color-ink-subtle: #656b76;
+    --color-ink-tertiary: #9298a4;
+
+    --color-primary: #5e6ad2;
+    --color-primary-hover: #4e5ac0;
+    --color-primary-focus: #5e69d1;
+    --color-on-primary: #ffffff;
+
+    --color-success: #16a34a;
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --color-canvas: #010102;
+    --color-surface-1: #0f1011;
+    --color-surface-2: #141516;
+    --color-surface-3: #18191a;
+    --color-surface-4: #191a1b;
+
+    --color-hairline: #23252a;
+    --color-hairline-strong: #34343a;
+    --color-hairline-tertiary: #3e3e44;
+
+    --color-ink: #f7f8f8;
+    --color-ink-muted: #d0d6e0;
+    --color-ink-subtle: #8a8f98;
+    --color-ink-tertiary: #62666d;
+
+    --color-primary: #5e6ad2;
+    --color-primary-hover: #828fff;
+    --color-primary-focus: #5e69d1;
+    --color-on-primary: #ffffff;
+
+    --color-success: #27a644;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not(.light) {
+      color-scheme: dark;
+
+      --color-canvas: #010102;
+      --color-surface-1: #0f1011;
+      --color-surface-2: #141516;
+      --color-surface-3: #18191a;
+      --color-surface-4: #191a1b;
+
+      --color-hairline: #23252a;
+      --color-hairline-strong: #34343a;
+      --color-hairline-tertiary: #3e3e44;
+
+      --color-ink: #f7f8f8;
+      --color-ink-muted: #d0d6e0;
+      --color-ink-subtle: #8a8f98;
+      --color-ink-tertiary: #62666d;
+
+      --color-primary: #5e6ad2;
+      --color-primary-hover: #828fff;
+      --color-primary-focus: #5e69d1;
+      --color-on-primary: #ffffff;
+
+      --color-success: #27a644;
+    }
+  }
+
+  html {
+    background-color: var(--color-canvas);
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    font-feature-settings:
+      "cv11",
+      "ss01";
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: rgb(94 106 210 / 0.32);
+    color: var(--color-ink);
+  }
+
+  /* Quiet, Linear-style scrollbar — chrome only, never decoration */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-hairline-strong);
+    border-radius: 8px;
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-hairline-tertiary);
+  }
+
+  input[type="search"]::-webkit-search-cancel-button {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

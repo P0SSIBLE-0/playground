@@ -1,0 +1,3 @@
+# Future mini-apps live here, one folder per app (e.g. src/apps/snake/).
+# Each app stays self-contained: component, components/, hooks/, lib/, index.ts.
+# Register it with one entry in src/registry/apps.ts — nothing else changes.
