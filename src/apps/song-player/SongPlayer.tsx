@@ -24,7 +24,9 @@ import { SleepTimerModal } from "./SleepTimerModal";
 import type { HistoryItem, PlayerScreen, SleepTimerState, Track } from "./types";
 import {
   formatTime,
+  generateRandomTrackName,
   getTrackColor,
+  getTrackGradientDataUrl,
   sanitizeArtist,
   sanitizeTrackTitle,
 } from "./utils";
@@ -32,6 +34,7 @@ import { FluidOrb } from "./FluidOrb";
 
 const WAVEFORM_BAR_COUNT = 57;
 const STORAGE_HISTORY_KEY = "song_player_history";
+const STORAGE_PLAYLIST_KEY = "song_player_playlist";
 
 /**
  * Transitions-polish spring curve for card expansion / collapse.
@@ -86,14 +89,21 @@ const BASE_WAVEFORM_HEIGHTS = [
 function SeekButton({
   direction,
   onSeek,
+  disabled,
 }: {
   direction: -10 | 10;
   onSeek: (deltaSeconds: number) => void;
+  disabled?: boolean;
 }) {
   const Icon = direction < 0 ? RotateCcw : RotateCw;
   const label = direction < 0 ? "Back 10 seconds" : "Forward 10 seconds";
   return (
-    <IconButton aria-label={label} title={label} onClick={() => onSeek(direction)}>
+    <IconButton
+      aria-label={label}
+      title={label}
+      onClick={() => onSeek(direction)}
+      disabled={disabled}
+    >
       <span className="relative flex items-center justify-center" aria-hidden="true">
         <Icon className="size-4.5" strokeWidth={2} />
         <span className="absolute mt-px text-[8px] leading-none font-bold">10</span>
@@ -117,19 +127,37 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   const [isSleepModalOpen, setIsSleepModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  // Tracks & History State
-  const [playlist, setPlaylist] = useState<Track[]>(DEFAULT_TRACKS);
+  // Tracks & History State (playlist persists so deletes stick).
+  const [playlist, setPlaylist] = useState<Track[]>(() => {
+    const stored = getItem<Track[]>(STORAGE_PLAYLIST_KEY, DEFAULT_TRACKS);
+    return Array.isArray(stored) && stored.length > 0 ? stored : DEFAULT_TRACKS;
+  });
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
 
-  const currentTrack = useMemo(
-    () => initialTrack || playlist[currentTrackIndex] || DEFAULT_TRACKS[0],
+  const currentTrack: Track | undefined = useMemo(
+    () => initialTrack || playlist[currentTrackIndex],
     [initialTrack, playlist, currentTrackIndex]
   );
 
+  // Display fallback so an emptied playlist never crashes the views.
+  const displayTrack: Track = useMemo(
+    () =>
+      currentTrack ?? {
+        id: "__empty__",
+        title: "No tracks yet",
+        artist: "Add audio from the playlist tab",
+        audioUrl: "",
+        duration: 30,
+      },
+    [currentTrack]
+  );
+
+  const hasTrack = currentTrack !== undefined;
+
   // Stable per-track orb color (deterministic hash — never flickers).
   const trackColor = useMemo(
-    () => getTrackColor(currentTrack.id),
-    [currentTrack.id]
+    () => getTrackColor(displayTrack.id),
+    [displayTrack.id]
   );
 
   const [history, setHistory] = useState<HistoryItem[]>(() => {
@@ -139,7 +167,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   // Playback State
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(currentTrack.duration || 30);
+  const [duration, setDuration] = useState(currentTrack?.duration ?? 30);
   const [isRepeating, setIsRepeating] = useState(false);
 
   // Sleep Timer State
@@ -171,6 +199,9 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     });
   }, []);
 
+  // Stable ref for auto-advancing to next track when playback ends
+  const skipNextRef = useRef<() => void>(() => {});
+
   // Track loader
   const loadAndPlayTrack = useCallback(
     (track: Track, autoPlay = true) => {
@@ -193,12 +224,12 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
             engine.seek(0);
             engine.play();
           } else {
-            setCurrentTrackIndex((prev) => (prev + 1) % playlist.length);
+            skipNextRef.current();
           }
         },
       });
     },
-    [engine, logTrackToHistory, playlist.length]
+    [engine, logTrackToHistory]
   );
 
   // Sync repeat mode with Howler
@@ -267,6 +298,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
 
   // Play / Pause toggle
   const handleTogglePlay = () => {
+    if (!currentTrack) return;
     if (isPlaying) {
       engine.pause();
       setIsPlaying(false);
@@ -278,13 +310,19 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   };
 
   // Skip controls
-  const handleSkipNext = () => {
+  const handleSkipNext = useCallback(() => {
     const nextIndex = (currentTrackIndex + 1) % playlist.length;
     setCurrentTrackIndex(nextIndex);
     loadAndPlayTrack(playlist[nextIndex], true);
-  };
+  }, [currentTrackIndex, playlist, loadAndPlayTrack]);
 
-  const handleSkipPrevious = () => {
+  // Keep the MediaSession handler pointing at the latest closure —
+  // assigned in an effect, never during render.
+  useEffect(() => {
+    skipNextRef.current = handleSkipNext;
+  }, [handleSkipNext]);
+
+  const handleSkipPrevious = useCallback(() => {
     if (currentTime > 3) {
       engine.seek(0);
       setCurrentTime(0);
@@ -294,17 +332,18 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       setCurrentTrackIndex(prevIndex);
       loadAndPlayTrack(playlist[prevIndex], true);
     }
-  };
+  }, [currentTime, engine, currentTrackIndex, playlist, loadAndPlayTrack]);
 
-  // Clamped absolute seek shared by the ±10s buttons and slider keys.
+  // Clamped absolute seek shared by the ±10s buttons, slider keys, waveform, and MediaSession.
   const seekToTime = useCallback(
     (targetSeconds: number) => {
+      if (!currentTrack) return;
       const max = engine.getDuration() || duration || 0;
       const target = Math.min(Math.max(0, targetSeconds), max);
-      engine.seek(target);
       setCurrentTime(Math.floor(target));
+      engine.seek(target);
     },
-    [engine, duration]
+    [engine, duration, currentTrack]
   );
 
   // Relative seek from the live engine position (fresher than state).
@@ -315,18 +354,215 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     [engine, seekToTime]
   );
 
+  // Single writer so playlist edits always persist together.
+  const updatePlaylist = (next: Track[]) => {
+    setPlaylist(next);
+    setItem(STORAGE_PLAYLIST_KEY, next);
+  };
+
+  const handleSelectTrack = (track: Track) => {
+    const idx = playlist.findIndex((t) => t.id === track.id);
+    if (idx !== -1) {
+      setCurrentTrackIndex(idx);
+    } else {
+      updatePlaylist([track, ...playlist]);
+      setCurrentTrackIndex(0);
+    }
+    loadAndPlayTrack(track, true);
+  };
+
+  const handleAddCustomTrack = (audioUrl: string, title?: string) => {
+    const finalTitle = title?.trim() || generateRandomTrackName();
+    const newTrack: Track = {
+      id: `custom-${Date.now()}`,
+      title: finalTitle,
+      artist: "Online Stream",
+      audioUrl,
+      duration: 30,
+    };
+    updatePlaylist([newTrack, ...playlist]);
+    setCurrentTrackIndex(0);
+    loadAndPlayTrack(newTrack, true);
+  };
+
+  // Delete a track (two-tap confirm lives in the row). Deleting the
+  // current track moves to the nearest remaining one, keeping play state.
+  const handleDeleteTrack = (id: string) => {
+    const idx = playlist.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const next = playlist.filter((t) => t.id !== id);
+    updatePlaylist(next);
+    if (id === currentTrack?.id) {
+      if (next.length === 0) {
+        engine.pause();
+        setIsPlaying(false);
+        setCurrentTime(0);
+        setDuration(30);
+        setCurrentTrackIndex(0);
+      } else {
+        const clamped = Math.min(idx, next.length - 1);
+        setCurrentTrackIndex(clamped);
+        loadAndPlayTrack(next[clamped], isPlaying);
+      }
+    } else if (idx < currentTrackIndex) {
+      setCurrentTrackIndex(currentTrackIndex - 1);
+    }
+  };
+
+  // Restore the curated playlist (used by the empty-playlist state).
+  const handleResetPlaylist = () => {
+    updatePlaylist(DEFAULT_TRACKS);
+    setCurrentTrackIndex(0);
+  };
+
   // Seek via waveform click
   const handleWaveformSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!currentTrack) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickPercent = Math.max(0, Math.min(1, clickX / rect.width));
     const targetSeconds = clickPercent * duration;
-    engine.seek(targetSeconds);
-    setCurrentTime(Math.floor(targetSeconds));
+    seekToTime(targetSeconds);
   };
+
+  // Dynamic document title when audio is playing in foreground or background
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (isPlaying) {
+      document.title = `▶ ${displayTrack.title} · ${displayTrack.artist} | Playground`;
+    } else {
+      document.title = "Playground";
+    }
+    return () => {
+      document.title = "Playground";
+    };
+  }, [isPlaying, displayTrack.title, displayTrack.artist]);
+
+  // MediaSession Metadata sync (locks screen, taskbar, notifications, Wearables/AirPods)
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    try {
+      const gradientCoverDataUrl = getTrackGradientDataUrl(displayTrack.id);
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: displayTrack.title,
+        artist: displayTrack.artist,
+        album: "Playground Audio",
+        artwork: [
+          { src: gradientCoverDataUrl, sizes: "512x512", type: "image/svg+xml" },
+        ],
+      });
+    } catch (err) {
+      console.debug("[MediaSession] Metadata update error:", err);
+    }
+  }, [displayTrack]);
+
+  // MediaSession Playback state & position state sync for background scrubber
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+
+    if ("setPositionState" in navigator.mediaSession && duration > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(0, duration),
+          playbackRate: 1,
+          position: Math.min(Math.max(0, currentTime), duration),
+        });
+      } catch {
+        // Ignored on edge cases where audio node isn't ready
+      }
+    }
+  }, [isPlaying, currentTime, duration]);
+
+  // Action handlers ref to avoid constantly rebinding MediaSession listeners
+  const actionHandlersRef = useRef({
+    play: handleTogglePlay,
+    pause: handleTogglePlay,
+    skipNext: handleSkipNext,
+    skipPrevious: handleSkipPrevious,
+    seekTo: seekToTime,
+    seekBy: handleSeekBy,
+  });
+
+  useEffect(() => {
+    actionHandlersRef.current = {
+      play: () => {
+        if (!isPlaying) {
+          engine.play();
+          setIsPlaying(true);
+          logTrackToHistory(currentTrack);
+        }
+      },
+      pause: () => {
+        if (isPlaying) {
+          engine.pause();
+          setIsPlaying(false);
+        }
+      },
+      skipNext: handleSkipNext,
+      skipPrevious: handleSkipPrevious,
+      seekTo: seekToTime,
+      seekBy: handleSeekBy,
+    };
+  });
+
+  // Register MediaSession Action Handlers for background controls and hardware media keys
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    const actionMap: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ["play", () => actionHandlersRef.current.play()],
+      ["pause", () => actionHandlersRef.current.pause()],
+      ["previoustrack", () => actionHandlersRef.current.skipPrevious()],
+      ["nexttrack", () => actionHandlersRef.current.skipNext()],
+      [
+        "seekto",
+        (details) => {
+          if (typeof details.seekTime === "number") {
+            actionHandlersRef.current.seekTo(details.seekTime);
+          }
+        },
+      ],
+      [
+        "seekbackward",
+        (details) => {
+          actionHandlersRef.current.seekBy(-(details.seekOffset || 10));
+        },
+      ],
+      [
+        "seekforward",
+        (details) => {
+          actionHandlersRef.current.seekBy(details.seekOffset || 10);
+        },
+      ],
+      ["stop", () => actionHandlersRef.current.pause()],
+    ];
+
+    for (const [action, handler] of actionMap) {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch {
+        // action not supported in current browser
+      }
+    }
+
+    return () => {
+      for (const [action] of actionMap) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   // Share link handler
   const handleShare = () => {
+    if (!currentTrack) return;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(currentTrack.audioUrl);
       setIsCopied(true);
@@ -379,7 +615,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
             onClick={() => setIsExpanded(true)}
             role="button"
             tabIndex={0}
-            aria-label={`Expand player for ${currentTrack.title}`}
+            aria-label={`Expand player for ${displayTrack.title}`}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -427,14 +663,14 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   transition={springTransition}
                   className="truncate text-sm leading-none font-medium tracking-[-0.05px] text-ink"
                 >
-                  {sanitizeTrackTitle(currentTrack.title, 22)}
+                  {sanitizeTrackTitle(displayTrack.title, 22)}
                 </motion.span>
                 <motion.span
                   layoutId="player-metadata-artist"
                   transition={springTransition}
                   className="mt-1 truncate text-xs leading-none text-ink-tertiary"
                 >
-                  {sanitizeArtist(currentTrack.artist, 22)}
+                  {sanitizeArtist(displayTrack.artist, 22)}
                 </motion.span>
               </div>
             </div>
@@ -450,8 +686,9 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   handleTogglePlay();
                 }}
                 aria-label={isPlaying ? "Pause" : "Play"}
+                disabled={!hasTrack}
                 style={{ backgroundColor: trackColor }}
-                className="flex size-8 cursor-pointer items-center justify-center rounded-full text-white transition-opacity hover:opacity-90 active:opacity-80 focus-visible:outline-2 focus-visible:outline-primary-focus"
+                className="flex size-8 cursor-pointer items-center justify-center rounded-full text-white transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary-focus"
               >
                 {isPlaying ? (
                   <Pause size={14} fill="currentColor" strokeWidth={0} />
@@ -561,7 +798,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                       color={trackColor}
                       animated={isPlaying && !shouldReduceMotion}
                       role="img"
-                      aria-label={`${currentTrack.title} artwork`}
+                      aria-label={`${displayTrack.title} artwork`}
                     />
                   </motion.div>
 
@@ -570,18 +807,27 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                     layoutId="player-metadata-title"
                     transition={springTransition}
                     className="w-full truncate px-3 text-center text-[18px] font-semibold tracking-[-0.2px] text-ink"
-                    title={currentTrack.title}
+                    title={displayTrack.title}
                   >
-                    {sanitizeTrackTitle(currentTrack.title, 26)}
+                    {sanitizeTrackTitle(displayTrack.title, 26)}
                   </motion.h2>
                   <motion.p
                     layoutId="player-metadata-artist"
                     transition={springTransition}
                     className="mt-0.5 w-full truncate px-3 text-center text-sm text-ink-subtle"
-                    title={currentTrack.artist}
+                    title={displayTrack.artist}
                   >
-                    {sanitizeArtist(currentTrack.artist, 28)}
+                    {sanitizeArtist(displayTrack.artist, 28)}
                   </motion.p>
+                  {!hasTrack && (
+                    <button
+                      type="button"
+                      onClick={handleOpenPlaylist}
+                      className="mt-3 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-primary-focus"
+                    >
+                      Open playlist
+                    </button>
+                  )}
 
                   {/* Bottom Transport Panel */}
                   <div className="mt-4 flex w-full flex-col gap-3 rounded-xl border border-hairline bg-surface-2 px-3.5 py-5 shadow-sm">
@@ -593,6 +839,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                       aria-valuemin={0}
                       aria-valuemax={duration}
                       aria-valuenow={currentTime}
+                      aria-disabled={!hasTrack}
                       tabIndex={0}
                       onKeyDown={(e) => {
                         if (e.key === "ArrowLeft") {
@@ -659,18 +906,22 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                         aria-label={isRepeating ? "Disable repeat" : "Enable repeat"}
                         aria-pressed={isRepeating}
                         tone={isRepeating ? "active" : "default"}
-                        style={isRepeating ? { color: trackColor } : undefined}
+                        disabled={!hasTrack}
                       >
                         <Repeat className="size-4" strokeWidth={2.2} />
                       </IconButton>
 
                       {/* Center Controls: Prev, -10s, Play/Pause, +10s, Next */}
                       <div className="flex items-center gap-2">
-                        <IconButton onClick={handleSkipPrevious} aria-label="Previous track">
+                        <IconButton
+                          onClick={handleSkipPrevious}
+                          aria-label="Previous track"
+                          disabled={!hasTrack}
+                        >
                           <SkipBack className="size-4 fill-current" strokeWidth={0} />
                         </IconButton>
 
-                        <SeekButton direction={-10} onSeek={handleSeekBy} />
+                        <SeekButton direction={-10} onSeek={handleSeekBy} disabled={!hasTrack} />
 
                         <motion.button
                           type="button"
@@ -678,8 +929,9 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                           transition={{ type: "spring", stiffness: 300, damping: 25 }}
                           onClick={handleTogglePlay}
                           aria-label={isPlaying ? "Pause" : "Play"}
+                          disabled={!hasTrack}
                           style={{ backgroundColor: trackColor }}
-                          className="flex size-10 cursor-pointer items-center justify-center rounded-full text-white shadow-sm transition-transform hover:scale-105 active:scale-95 focus-visible:outline-2 focus-visible:outline-primary-focus"
+                          className="flex size-10 cursor-pointer items-center justify-center rounded-full text-white shadow-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary-focus"
                         >
                           {isPlaying ? (
                             <Pause className="size-5 fill-current" strokeWidth={0} />
@@ -691,9 +943,13 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                           )}
                         </motion.button>
 
-                        <SeekButton direction={10} onSeek={handleSeekBy} />
+                        <SeekButton direction={10} onSeek={handleSeekBy} disabled={!hasTrack} />
 
-                        <IconButton onClick={handleSkipNext} aria-label="Next track">
+                        <IconButton
+                          onClick={handleSkipNext}
+                          aria-label="Next track"
+                          disabled={!hasTrack}
+                        >
                           <SkipForward
                             className="size-4 fill-current"
                             strokeWidth={0}
@@ -721,6 +977,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                           onClick={handleShare}
                           aria-label="Share audio link"
                           title="Share audio link"
+                          disabled={!hasTrack}
                         >
                           <Share2 className="size-4" strokeWidth={2.2} />
                         </IconButton>
@@ -739,36 +996,18 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   className="flex w-full flex-col"
                 >
                   <PlaylistHistoryScreen
-                    currentTrack={currentTrack}
+                    currentTrack={displayTrack}
                     isPlaying={isPlaying}
                     playlist={playlist}
                     history={history}
-                    onSelectTrack={(track) => {
-                      const idx = playlist.findIndex((t) => t.id === track.id);
-                      if (idx !== -1) {
-                        setCurrentTrackIndex(idx);
-                      } else {
-                        setPlaylist((prev) => [track, ...prev]);
-                        setCurrentTrackIndex(0);
-                      }
-                      loadAndPlayTrack(track, true);
-                    }}
+                    onSelectTrack={handleSelectTrack}
+                    onDeleteTrack={handleDeleteTrack}
+                    onResetPlaylist={handleResetPlaylist}
                     onClearHistory={() => {
                       setHistory([]);
                       setItem(STORAGE_HISTORY_KEY, []);
                     }}
-                    onAddCustomTrack={(url, title) => {
-                      const newTrack: Track = {
-                        id: `custom-${Date.now()}`,
-                        title: title || "Stream Track",
-                        artist: "Online Stream",
-                        audioUrl: url,
-                        duration: 30,
-                      };
-                      setPlaylist((prev) => [newTrack, ...prev]);
-                      setCurrentTrackIndex(0);
-                      loadAndPlayTrack(newTrack, true);
-                    }}
+                    onAddCustomTrack={handleAddCustomTrack}
                     onBackToPlayer={handleBackToPlayer}
                   />
                 </motion.div>
