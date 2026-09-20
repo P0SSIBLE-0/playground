@@ -228,11 +228,65 @@ export function getTrackColor(trackId: string): string {
 /**
  * Formats time in seconds to mm:ss format.
  */
-export function formatTime(seconds: number): string {
-  if (isNaN(seconds) || seconds < 0) return "00:00";
+export function formatTime(seconds?: number, fallback = "00:00"): string {
+  if (seconds === undefined || isNaN(seconds) || seconds < 0) return fallback;
+  if (seconds === 0 && fallback !== "00:00") return fallback;
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
+}
+
+/**
+ * Probes remote audio metadata using an in-memory Audio object to detect
+ * its true duration without playing the track.
+ */
+export function fetchAudioDuration(url: string): Promise<number> {
+  return new Promise((resolve) => {
+    try {
+      const audio = new Audio();
+      audio.preload = "metadata";
+      let resolved = false;
+
+      const onLoaded = () => {
+        if (resolved) return;
+        resolved = true;
+        const dur = Math.round(audio.duration);
+        cleanup();
+        resolve(dur > 0 && isFinite(dur) ? dur : 0);
+      };
+
+      const onError = () => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve(0);
+      };
+
+      const cleanup = () => {
+        audio.removeEventListener("loadedmetadata", onLoaded);
+        audio.removeEventListener("durationchange", onLoaded);
+        audio.removeEventListener("canplay", onLoaded);
+        audio.removeEventListener("error", onError);
+        audio.src = "";
+      };
+
+      audio.addEventListener("loadedmetadata", onLoaded);
+      audio.addEventListener("durationchange", onLoaded);
+      audio.addEventListener("canplay", onLoaded);
+      audio.addEventListener("error", onError);
+      audio.src = url;
+
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve(0);
+        }
+      }, 5000);
+    } catch {
+      resolve(0);
+    }
+  });
 }
 
 /**
@@ -245,3 +299,4 @@ export function formatRelativeTime(timestamp: number): string {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
+

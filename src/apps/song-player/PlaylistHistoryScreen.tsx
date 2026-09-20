@@ -28,6 +28,7 @@ import type { HistoryItem, Track } from "./types";
 interface PlaylistHistoryScreenProps {
   currentTrack: Track;
   isPlaying: boolean;
+  duration?: number;
   playlist: Track[];
   history: HistoryItem[];
   onSelectTrack: (track: Track) => void;
@@ -46,6 +47,7 @@ const smoothEase: [number, number, number, number] = [0.22, 1, 0.36, 1];
 export function PlaylistHistoryScreen({
   currentTrack,
   isPlaying,
+  duration,
   playlist,
   history,
   onSelectTrack,
@@ -302,7 +304,12 @@ export function PlaylistHistoryScreen({
                       onClick={(e) => e.stopPropagation()}
                     >
                       <span className="font-mono text-[11px] text-ink-tertiary mr-0.5">
-                        {formatTime(track.duration || 30)}
+                        {formatTime(
+                          isCurrent && typeof duration === "number" && duration > 0
+                            ? duration
+                            : track.duration || 0,
+                          "--:--"
+                        )}
                       </span>
 
                       <AnimatePresence mode="wait" initial={false}>

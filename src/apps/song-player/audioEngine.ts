@@ -102,8 +102,16 @@ export class AudioEngine {
       pool: 1, // Crucial: enforce single-voice pool to prevent Howler from allocating multiple overlapping streams
       preload: true,
       onload: () => {
-        const dur = this.howl?.duration() || track.duration || 30;
-        callbacks.onLoad?.(dur);
+        const sound = (this.howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0];
+        const node = sound?._node;
+        const dur =
+          node && typeof node.duration === "number" && !isNaN(node.duration) && isFinite(node.duration) && node.duration > 0
+            ? node.duration
+            : this.howl?.duration() || track.duration || 0;
+
+        if (dur > 0) {
+          callbacks.onLoad?.(dur);
+        }
       },
       onplay: () => {
         this.cleanupExtraSounds();
@@ -128,6 +136,26 @@ export class AudioEngine {
         callbacks.onError?.(err);
       },
     });
+
+    // In HTML5 streaming mode, duration can resolve upon loadedmetadata or durationchange
+    setTimeout(() => {
+      const sound = (this.howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> })._sounds?.[0];
+      const node = sound?._node;
+      if (node) {
+        const handleDurationUpdate = () => {
+          if (typeof node.duration === "number" && !isNaN(node.duration) && isFinite(node.duration) && node.duration > 0) {
+            callbacks.onLoad?.(node.duration);
+          }
+        };
+        if (node.readyState >= 1 && node.duration > 0) {
+          handleDurationUpdate();
+        } else {
+          node.addEventListener("loadedmetadata", handleDurationUpdate, { once: true });
+          node.addEventListener("durationchange", handleDurationUpdate);
+          node.addEventListener("canplay", handleDurationUpdate, { once: true });
+        }
+      }
+    }, 0);
 
     return this.howl;
   }

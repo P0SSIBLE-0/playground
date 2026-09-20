@@ -23,6 +23,7 @@ import { PlaylistHistoryScreen } from "./PlaylistHistoryScreen";
 import { SleepTimerModal } from "./SleepTimerModal";
 import type { HistoryItem, PlayerScreen, SleepTimerState, Track } from "./types";
 import {
+  fetchAudioDuration,
   formatTime,
   generateRandomTrackName,
   getTrackColor,
@@ -147,7 +148,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
         title: "No tracks yet",
         artist: "Add audio from the playlist tab",
         audioUrl: "",
-        duration: 30,
+        duration: 0,
       },
     [currentTrack]
   );
@@ -167,7 +168,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   // Playback State
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(currentTrack?.duration ?? 30);
+  const [duration, setDuration] = useState(currentTrack?.duration ?? 0);
   const [isRepeating, setIsRepeating] = useState(false);
 
   // Sleep Timer State
@@ -208,11 +209,25 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       setCurrentTime(0);
       engine.loadTrack(track, {
         onLoad: (dur) => {
-          setDuration(dur > 0 ? dur : track.duration || 30);
+          const realDur =
+            dur > 0 && isFinite(dur) ? Math.round(dur) : track.duration || 0;
+          if (realDur > 0) {
+            setDuration(realDur);
+            setPlaylist((prev) => {
+              const updated = prev.map((t) =>
+                t.id === track.id ? { ...t, duration: realDur } : t
+              );
+              setItem(STORAGE_PLAYLIST_KEY, updated);
+              return updated;
+            });
+          }
           if (autoPlay) {
             engine.play();
             setIsPlaying(true);
-            logTrackToHistory(track);
+            logTrackToHistory({
+              ...track,
+              duration: realDur > 0 ? realDur : track.duration,
+            });
           }
         },
         onPlay: () => setIsPlaying(true),
@@ -378,11 +393,24 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       title: finalTitle,
       artist: "Online Stream",
       audioUrl,
-      duration: 30,
+      duration: 0,
     };
     updatePlaylist([newTrack, ...playlist]);
     setCurrentTrackIndex(0);
     loadAndPlayTrack(newTrack, true);
+
+    // Asynchronously probe metadata duration so playlist immediately shows the real length
+    fetchAudioDuration(audioUrl).then((realDuration) => {
+      if (realDuration > 0) {
+        setPlaylist((prev) => {
+          const updated = prev.map((t) =>
+            t.id === newTrack.id ? { ...t, duration: realDuration } : t
+          );
+          setItem(STORAGE_PLAYLIST_KEY, updated);
+          return updated;
+        });
+      }
+    });
   };
 
   // Delete a track (two-tap confirm lives in the row). Deleting the
@@ -893,9 +921,9 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                       })}
                     </div>
 
-                    {/* Centered Timestamp 00:12 / 00:30 */}
+                    {/* Centered Timestamp 00:12 / 03:45 */}
                     <div className="flex justify-center font-mono text-xs font-normal text-ink-tertiary tabular-nums">
-                      {formatTime(currentTime)} / {formatTime(duration)}
+                      {formatTime(currentTime)} / {formatTime(duration, "--:--")}
                     </div>
 
                     {/* Bottom Controls Row: Repeat, SkipBack, Play/Pause, SkipForward, Share */}
@@ -998,6 +1026,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                   <PlaylistHistoryScreen
                     currentTrack={displayTrack}
                     isPlaying={isPlaying}
+                    duration={duration}
                     playlist={playlist}
                     history={history}
                     onSelectTrack={handleSelectTrack}
