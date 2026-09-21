@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import {
   ArrowLeft,
   Check,
@@ -68,6 +68,23 @@ export function PlaylistHistoryScreen({
   const [armedId, setArmedId] = useState<string | null>(null);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const disarmTimer = useRef<number | null>(null);
+  const shouldReduceMotion = useReducedMotion();
+
+  // Dynamic animated height measurement for smooth tab switching
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setContentHeight(Math.round(entry.contentRect.height));
+      }
+    });
+    observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -222,302 +239,308 @@ export function PlaylistHistoryScreen({
         )}
       </AnimatePresence>
 
-      {/* Content List with Stagger Tokens */}
-      <div className="mt-3 max-h-88 min-h-65 space-y-1.5 overflow-y-auto pr-0.5">
-        <AnimatePresence mode="wait">
-          {activeTab === "playlist" ? (
-            <motion.div
-              key="tab-playlist-list"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.15, ease: "easeInOut" }}
-              className="space-y-1.5"
-            >
-              {playlist.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <ListMusic className="mb-2 size-8 opacity-40" aria-hidden />
-                  <p className="text-xs font-medium text-ink-tertiary">
-                    Playlist is empty
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-ink-subtle">
-                    Add audio with + or bring back the curated tracks
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onResetPlaylist}
-                    className="mt-4 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-primary-focus"
-                  >
-                    Restore defaults
-                  </button>
-                </div>
-              ) : (
-              playlist.map((track, i) => {
-                const isCurrent = track.id === currentTrack.id;
-                return (
-                  <motion.div
-                    key={track.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{
-                      duration: 0.2,
-                      ease: smoothEase,
-                      delay: Math.min(i, 6) * 0.04, // transitions-polish: --duration-stagger (40ms)
-                    }}
-                    onClick={() => {
-                      onSelectTrack(track);
-                      onBackToPlayer();
-                    }}
-                    className={cn(
-                      "group flex cursor-pointer items-center justify-between rounded-xl border p-2.5 transition-colors duration-150",
-                      isCurrent
-                        ? "border-primary/40 bg-surface-2 ring-1 ring-primary/20"
-                        : "border-transparent bg-transparent hover:border-hairline hover:bg-surface-2"
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div
-                        className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-xs border border-white/15"
-                        style={{ background: getTrackGradient(track.id) }}
-                      >
-                        <Music className="size-4 text-white/90 drop-shadow-xs" />
-                        {isCurrent && (
-                          isLoading ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                              <Loader2 className="size-4 animate-spin" />
-                            </div>
-                          ) : isPlaying ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                              <Volume2 className="size-4 animate-pulse" />
-                            </div>
-                          ) : null
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4
-                          className={cn(
-                            "truncate text-xs font-semibold",
-                            isCurrent ? "text-primary" : "text-ink"
-                          )}
-                        >
-                          {sanitizeTrackTitle(track.title)}
-                        </h4>
-                        <p className="truncate text-[11px] text-ink-tertiary">
-                          {sanitizeArtist(track.artist)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div
-                      className="flex items-center gap-1.5 pl-2"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <span className="font-mono text-[11px] text-ink-tertiary mr-0.5">
-                        {formatTime(
-                          track.duration && track.duration > 0
-                            ? track.duration
-                            : isCurrent && typeof duration === "number" && duration > 0
-                            ? duration
-                            : 0,
-                          "--:--"
-                        )}
-                      </span>
-
-                      <AnimatePresence mode="wait" initial={false}>
-                        {armedId === track.id ? (
-                          <motion.div
-                            key="confirm-delete-box"
-                            initial={{ opacity: 0, scale: 0.9, x: 4 }}
-                            animate={{ opacity: 1, scale: 1, x: 0 }}
-                            exit={{ opacity: 0, scale: 0.9, x: 4 }}
-                            transition={{ duration: 0.15 }}
-                            className="flex items-center gap-1"
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) => handleConfirmDelete(e, track.id)}
-                              aria-label={`Confirm delete ${track.title}`}
-                              className="flex items-center gap-1 rounded-md bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow-xs hover:bg-red-600 active:scale-95 transition-all cursor-pointer"
-                            >
-                              <Check className="size-3" strokeWidth={2.5} />
-                              <span>Delete?</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleCancelDelete}
-                              aria-label="Cancel delete"
-                              title="Cancel"
-                              className="flex size-5 cursor-pointer items-center justify-center rounded-md text-ink-tertiary hover:bg-surface-3 hover:text-ink transition-colors"
-                            >
-                              <X className="size-3" strokeWidth={2} />
-                            </button>
-                          </motion.div>
-                        ) : (
-                          <motion.button
-                            key="trash-button"
-                            type="button"
-                            onClick={(e) => handleDeleteClick(e, track)}
-                            aria-label={`Delete ${track.title}`}
-                            title="Delete track"
-                            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-surface-3 hover:text-red-500"
-                          >
-                            <Trash2 className="size-3" strokeWidth={2.2} />
-                          </motion.button>
-                        )}
-                      </AnimatePresence>
-
-                      <span
-                        className={cn(
-                          "flex size-6 items-center justify-center rounded-full transition-opacity duration-150",
-                          isCurrent
-                            ? "bg-primary text-on-primary opacity-100"
-                            : "bg-surface-3 text-ink opacity-0 group-hover:opacity-100"
-                        )}
-                      >
-                        <Play className="size-2.5 fill-current ml-0.5" />
-                      </span>
-                    </div>
-                  </motion.div>
-                );
-              })
-              )}
-            </motion.div>
-          ) : history.length === 0 ? (
-            <motion.div
-              key="tab-history-empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="flex flex-col items-center justify-center py-12 text-center text-ink-tertiary"
-            >
-              <Clock className="size-8 opacity-40 mb-2" />
-              <p className="text-xs font-medium">No listening history yet</p>
-              <p className="text-[11px] text-ink-subtle mt-0.5">
-                Tracks you play will show up here
-              </p>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="tab-history-list"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.15, ease: "easeInOut" }}
-              className="space-y-1.5"
-            >
-              {history.map((item, i) => {
-                const isCurrent = item.id === currentTrack.id;
-                return (
-                  <motion.div
-                    key={`${item.id}-${item.playedAt}`}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{
-                      duration: 0.2,
-                      ease: smoothEase,
-                      delay: Math.min(i, 6) * 0.04, // transitions-polish: --duration-stagger (40ms)
-                    }}
-                    onClick={() => {
-                      onSelectTrack(item);
-                      onBackToPlayer();
-                    }}
-                    className={cn(
-                      "group flex cursor-pointer items-center justify-between rounded-xl border p-2.5 transition-colors duration-150",
-                      isCurrent
-                        ? "border-primary/40 bg-surface-2 ring-1 ring-primary/20"
-                        : "border-transparent bg-transparent hover:border-hairline hover:bg-surface-2"
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div
-                        className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-xs border border-white/15"
-                        style={{ background: getTrackGradient(item.id) }}
-                      >
-                        <Music className="size-4 text-white/90 drop-shadow-xs" />
-                        {isCurrent && (
-                          isLoading ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                              <Loader2 className="size-4 animate-spin" />
-                            </div>
-                          ) : isPlaying ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
-                              <Volume2 className="size-4 animate-pulse" />
-                            </div>
-                          ) : null
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="truncate text-xs font-semibold text-ink">
-                          {sanitizeTrackTitle(item.title)}
-                        </h4>
-                        <p className="truncate text-[11px] text-ink-tertiary">
-                          {sanitizeArtist(item.artist)} • {formatRelativeTime(item.playedAt)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 pl-2">
-                      <span className="flex size-6 items-center justify-center rounded-full bg-surface-3 text-ink opacity-0 transition-opacity group-hover:opacity-100">
-                        <Play className="size-2.5 fill-current ml-0.5" />
-                      </span>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* History Clear Footer */}
-      {activeTab === "history" && history.length > 0 && (
-        <div className="mt-3 flex justify-between items-center border-t border-hairline pt-3 text-xs">
-          <span className="text-[11px] text-ink-tertiary">
-            {history.length} tracks logged
-          </span>
+      {/* Animated Height Tab Content Container */}
+      <motion.div
+        animate={{ height: contentHeight ?? "auto" }}
+        transition={{
+          duration: shouldReduceMotion ? 0 : 0.25,
+          ease: smoothEase,
+        }}
+        className="mt-3 overflow-hidden"
+      >
+        <div ref={contentRef}>
           <AnimatePresence mode="wait" initial={false}>
-            {confirmClearHistory ? (
+            {activeTab === "playlist" ? (
               <motion.div
-                key="confirm-clear"
-                initial={{ opacity: 0, x: 6 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 6 }}
-                transition={{ duration: 0.15 }}
-                className="flex items-center gap-1.5"
+                key="tab-playlist-pane"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15, ease: "easeInOut" }}
+                className="max-h-88 space-y-1.5 overflow-y-auto pr-0.5"
               >
-                <span className="text-[11px] font-medium text-red-500">Clear all?</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfirmClearHistory(false);
-                    onClearHistory();
-                  }}
-                  className="rounded bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow-xs hover:bg-red-600 transition-colors cursor-pointer"
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmClearHistory(false)}
-                  className="rounded px-1.5 py-0.5 text-[11px] text-ink-tertiary hover:text-ink transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
+                {playlist.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <ListMusic className="mb-2 size-8 opacity-40" aria-hidden />
+                    <p className="text-xs font-medium text-ink-tertiary">
+                      Playlist is empty
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-ink-subtle">
+                      Add audio with + or bring back the curated tracks
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onResetPlaylist}
+                      className="mt-4 rounded-md border border-hairline bg-surface-1 px-3 py-1.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-primary-focus"
+                    >
+                      Restore defaults
+                    </button>
+                  </div>
+                ) : (
+                  playlist.map((track, i) => {
+                    const isCurrent = track.id === currentTrack.id;
+                    return (
+                      <motion.div
+                        key={track.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: 0.2,
+                          ease: smoothEase,
+                          delay: Math.min(i, 6) * 0.04, // transitions-polish: --duration-stagger (40ms)
+                        }}
+                        onClick={() => {
+                          onSelectTrack(track);
+                          onBackToPlayer();
+                        }}
+                        className={cn(
+                          "group flex cursor-pointer items-center justify-between rounded-xl border p-2.5 transition-colors duration-150",
+                          isCurrent
+                            ? "border-primary/40 bg-surface-2 ring-1 ring-primary/20"
+                            : "border-transparent bg-transparent hover:border-hairline hover:bg-surface-2"
+                        )}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div
+                            className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-xs border border-white/15"
+                            style={{ background: getTrackGradient(track.id) }}
+                          >
+                            <Music className="size-4 text-white/90 drop-shadow-xs" />
+                            {isCurrent && (
+                              isLoading ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                                  <Loader2 className="size-4 animate-spin" />
+                                </div>
+                              ) : isPlaying ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                                  <Volume2 className="size-4 animate-pulse" />
+                                </div>
+                              ) : null
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4
+                              className={cn(
+                                "truncate text-xs font-semibold",
+                                isCurrent ? "text-primary" : "text-ink"
+                              )}
+                            >
+                              {sanitizeTrackTitle(track.title)}
+                            </h4>
+                            <p className="truncate text-[11px] text-ink-tertiary">
+                              {sanitizeArtist(track.artist)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div
+                          className="flex items-center gap-1.5 pl-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="font-mono text-[11px] text-ink-tertiary mr-0.5">
+                            {formatTime(
+                              track.duration && track.duration > 0
+                                ? track.duration
+                                : isCurrent && typeof duration === "number" && duration > 0
+                                ? duration
+                                : 0,
+                              "--:--"
+                            )}
+                          </span>
+
+                          <AnimatePresence mode="wait" initial={false}>
+                            {armedId === track.id ? (
+                              <motion.div
+                                key="confirm-delete-box"
+                                initial={{ opacity: 0, scale: 0.9, x: 4 }}
+                                animate={{ opacity: 1, scale: 1, x: 0 }}
+                                exit={{ opacity: 0, scale: 0.9, x: 4 }}
+                                transition={{ duration: 0.15 }}
+                                className="flex items-center gap-1"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleConfirmDelete(e, track.id)}
+                                  aria-label={`Confirm delete ${track.title}`}
+                                  className="flex items-center gap-1 rounded-md bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow-xs hover:bg-red-600 active:scale-95 transition-all cursor-pointer"
+                                >
+                                  <Check className="size-3" strokeWidth={2.5} />
+                                  <span>Delete?</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelDelete}
+                                  aria-label="Cancel delete"
+                                  title="Cancel"
+                                  className="flex size-5 cursor-pointer items-center justify-center rounded-md text-ink-tertiary hover:bg-surface-3 hover:text-ink transition-colors"
+                                >
+                                  <X className="size-3" strokeWidth={2} />
+                                </button>
+                              </motion.div>
+                            ) : (
+                              <motion.button
+                                key="trash-button"
+                                type="button"
+                                onClick={(e) => handleDeleteClick(e, track)}
+                                aria-label={`Delete ${track.title}`}
+                                title="Delete track"
+                                className="flex size-6 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-surface-3 hover:text-red-500"
+                              >
+                                <Trash2 className="size-3" strokeWidth={2.2} />
+                              </motion.button>
+                            )}
+                          </AnimatePresence>
+
+                          <span
+                            className={cn(
+                              "flex size-6 items-center justify-center rounded-full transition-opacity duration-150",
+                              isCurrent
+                                ? "bg-primary text-on-primary opacity-100"
+                                : "bg-surface-3 text-ink opacity-0 group-hover:opacity-100"
+                            )}
+                          >
+                            <Play className="size-2.5 fill-current ml-0.5" />
+                          </span>
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                )}
               </motion.div>
             ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmClearHistory(true)}
-                className="flex items-center gap-1 cursor-pointer font-medium text-red-500 hover:text-red-400 transition-colors duration-150"
+              <motion.div
+                key="tab-history-pane"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15, ease: "easeInOut" }}
+                className="flex flex-col"
               >
-                <Trash2 className="size-3.5" />
-                Clear history
-              </button>
+                <div className="max-h-88 space-y-1.5 overflow-y-auto pr-0.5">
+                  {history.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center text-ink-tertiary">
+                      <Clock className="size-8 opacity-40 mb-2" />
+                      <p className="text-xs font-medium">No listening history yet</p>
+                      <p className="text-[11px] text-ink-subtle mt-0.5">
+                        Tracks you play will show up here
+                      </p>
+                    </div>
+                  ) : (
+                    history.map((item, i) => {
+                      const isCurrent = item.id === currentTrack.id;
+                      return (
+                        <motion.div
+                          key={`${item.id}-${item.playedAt}`}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{
+                            duration: 0.2,
+                            ease: smoothEase,
+                            delay: Math.min(i, 6) * 0.04, // transitions-polish: --duration-stagger (40ms)
+                          }}
+                          onClick={() => {
+                            onSelectTrack(item);
+                            onBackToPlayer();
+                          }}
+                          className={cn(
+                            "group flex cursor-pointer items-center justify-between rounded-xl border p-2.5 transition-colors duration-150",
+                            isCurrent
+                              ? "border-primary/40 bg-surface-2 ring-1 ring-primary/20"
+                              : "border-transparent bg-transparent hover:border-hairline hover:bg-surface-2"
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div
+                              className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-xs border border-white/15"
+                              style={{ background: getTrackGradient(item.id) }}
+                            >
+                              <Music className="size-4 text-white/90 drop-shadow-xs" />
+                              {isCurrent && (
+                                isLoading ? (
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                                    <Loader2 className="size-4 animate-spin" />
+                                  </div>
+                                ) : isPlaying ? (
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] text-white">
+                                    <Volume2 className="size-4 animate-pulse" />
+                                  </div>
+                                ) : null
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h4 className="truncate text-xs font-semibold text-ink">
+                                {sanitizeTrackTitle(item.title)}
+                              </h4>
+                              <p className="truncate text-[11px] text-ink-tertiary">
+                                {sanitizeArtist(item.artist)} • {formatRelativeTime(item.playedAt)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 pl-2">
+                            <span className="flex size-6 items-center justify-center rounded-full bg-surface-3 text-ink opacity-0 transition-opacity group-hover:opacity-100">
+                              <Play className="size-2.5 fill-current ml-0.5" />
+                            </span>
+                          </div>
+                        </motion.div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* History Clear Footer */}
+                {history.length > 0 && (
+                  <div className="mt-3 flex justify-between items-center border-t border-hairline pt-3 text-xs">
+                    <span className="text-[11px] text-ink-tertiary">
+                      {history.length} tracks logged
+                    </span>
+                    <AnimatePresence mode="wait" initial={false}>
+                      {confirmClearHistory ? (
+                        <motion.div
+                          key="confirm-clear"
+                          initial={{ opacity: 0, x: 6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 6 }}
+                          transition={{ duration: 0.15 }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <span className="text-[11px] font-medium text-red-500">Clear all?</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmClearHistory(false);
+                              onClearHistory();
+                            }}
+                            className="rounded bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow-xs hover:bg-red-600 transition-colors cursor-pointer"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmClearHistory(false)}
+                            className="rounded px-1.5 py-0.5 text-[11px] text-ink-tertiary hover:text-ink transition-colors cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </motion.div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearHistory(true)}
+                          className="flex items-center gap-1 cursor-pointer font-medium text-red-500 hover:text-red-400 transition-colors duration-150"
+                        >
+                          <Trash2 className="size-3.5" />
+                          Clear history
+                        </button>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+              </motion.div>
             )}
           </AnimatePresence>
         </div>
-      )}
+      </motion.div>
     </div>
   );
 }

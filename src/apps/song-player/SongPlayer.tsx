@@ -204,6 +204,16 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     repeatRef.current = isRepeating;
   }, [isRepeating]);
 
+  const currentTrackIndexRef = useRef(currentTrackIndex);
+  useEffect(() => {
+    currentTrackIndexRef.current = currentTrackIndex;
+  }, [currentTrackIndex]);
+
+  const playlistRef = useRef(playlist);
+  useEffect(() => {
+    playlistRef.current = playlist;
+  }, [playlist]);
+
   // Add track to history
   const logTrackToHistory = useCallback((track: Track) => {
     setHistory((prev) => {
@@ -218,7 +228,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
   }, []);
 
   // Stable ref for auto-advancing to next track when playback ends
-  const skipNextRef = useRef<() => void>(() => {});
+  const skipNextRef = useRef<() => void>(() => { });
 
   // Track loader
   const loadAndPlayTrack = useCallback(
@@ -293,9 +303,21 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
           if (repeatRef.current) {
             engine.seek(0);
             engine.play();
-          } else {
-            skipNextRef.current();
+            return;
           }
+
+          // Stop playback when reaching the end of the last track from the playlist
+          const isLastTrack =
+            currentTrackIndexRef.current >= playlistRef.current.length - 1;
+          if (isLastTrack) {
+            engine.pause();
+            setIsPlaying(false);
+            engine.seek(0);
+            setCurrentTime(0);
+            return;
+          }
+
+          skipNextRef.current();
         },
       });
     },
@@ -321,10 +343,27 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
     let intervalId: number | null = null;
     if (isPlaying) {
       intervalId = window.setInterval(() => {
-        const floored = Math.floor(engine.getSeek());
+        const seek = engine.getSeek();
+        const dur = engine.getDuration() || durationRef.current || 0;
+        const floored = Math.floor(seek);
         // Bail out on identical values so the 250ms poll doesn't
         // re-render the tree when the displayed second hasn't changed.
         setCurrentTime((prev) => (prev === floored ? prev : floored));
+
+        // Fallback safeguard: stop playback if audio reaches end of duration on last track
+        if (dur > 0 && seek >= dur) {
+          if (repeatRef.current) {
+            engine.seek(0);
+            engine.play();
+          } else if (currentTrackIndexRef.current >= playlistRef.current.length - 1) {
+            engine.pause();
+            setIsPlaying(false);
+            engine.seek(0);
+            setCurrentTime(0);
+          } else {
+            skipNextRef.current();
+          }
+        }
       }, 250);
     }
     return () => {
@@ -404,6 +443,10 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
       engine.pause();
       setIsPlaying(false);
     } else {
+      if (currentTime >= duration && duration > 0) {
+        engine.seek(0);
+        setCurrentTime(0);
+      }
       engine.play();
       setIsPlaying(true);
       logTrackToHistory(currentTrack);
@@ -412,10 +455,17 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
 
   // Skip controls
   const handleSkipNext = useCallback(() => {
-    const nextIndex = (currentTrackIndex + 1) % playlist.length;
+    if (currentTrackIndex >= playlist.length - 1) {
+      engine.pause();
+      setIsPlaying(false);
+      engine.seek(0);
+      setCurrentTime(0);
+      return;
+    }
+    const nextIndex = currentTrackIndex + 1;
     setCurrentTrackIndex(nextIndex);
     loadAndPlayTrack(playlist[nextIndex], true);
-  }, [currentTrackIndex, playlist, loadAndPlayTrack]);
+  }, [currentTrackIndex, playlist, loadAndPlayTrack, engine]);
 
   // Keep the MediaSession handler pointing at the latest closure —
   // assigned in an effect, never during render.
@@ -1103,7 +1153,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
                         <IconButton
                           onClick={handleSkipNext}
                           aria-label="Next track"
-                          disabled={!hasTrack}
+                          disabled={!hasTrack || currentTrackIndex >= playlist.length - 1}
                         >
                           <SkipForward
                             className="size-4 fill-current"
@@ -1183,7 +1233,7 @@ export function SongPlayer({ initialTrack }: SongPlayerProps) {
           0,
           Math.round(
             (engine.getDuration() || duration || 0) -
-              (engine.getSeek() || currentTime || 0)
+            (engine.getSeek() || currentTime || 0)
           )
         )}
         onSetTimer={handleSetSleepTimer}
